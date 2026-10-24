@@ -263,7 +263,29 @@
   }
 
   /* ---------- touch: any number of fingers at once ---------- */
-  const unlock = () => { if (ac.state !== 'running') ac.resume(); };
+  // iPhone: sound may only start on a finished gesture (a lift, a click, a key), not on the press, and the silent switch
+  // mutes Web Audio unless the page asks for playback and keeps a (silent) media element playing. As in DRUB.
+  const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  let silentEl = null;
+  function unmuteIOS() {
+    if (!IS_IOS || silentEl) return;
+    const n = 800, v = new DataView(new ArrayBuffer(44 + n)), w4 = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+    w4(0, 'RIFF'); v.setUint32(4, 36 + n, true); w4(8, 'WAVE'); w4(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+    v.setUint16(22, 1, true); v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+    w4(36, 'data'); v.setUint32(40, n, true); for (let i = 0; i < n; i++) v.setUint8(44 + i, 128);
+    let bin = ''; new Uint8Array(v.buffer).forEach(b => { bin += String.fromCharCode(b); });
+    silentEl = document.createElement('audio'); silentEl.setAttribute('x-webkit-airplay', 'deny'); silentEl.loop = true;
+    silentEl.src = 'data:audio/wav;base64,' + btoa(bin); silentEl.play().catch(() => { silentEl = null; });
+  }
+  const unlock = () => {
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (_) {}
+    unmuteIOS();
+    if (ac.state !== 'running') {
+      try { const b = ac.createBufferSource(); b.buffer = ac.createBuffer(1, 1, ac.sampleRate); b.connect(ac.destination); b.start(0); } catch (_) {}
+      ac.resume().catch(() => {});
+    }
+  };
+  for (const type of ['pointerup', 'touchend', 'click', 'keydown']) addEventListener(type, unlock, { capture: true, passive: true });
   const local = e => { const r = stage.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
   const before = () => [...Array(N).keys()].map(fretOf);
   // the board: the nearest string, the fret space the finger is in (above the nut = open)
