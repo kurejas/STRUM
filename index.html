@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#FFFFFF">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="STRUM">
+<title>STRUM</title>
+<script>
+  // SF Pro as in DRUB: the installed variable font on Macs, the system font on Apple devices, Archivo elsewhere (SF Pro's
+  // licence forbids serving it). ?font=fallback previews Archivo anywhere.
+  (function () {
+    var fallback = /[?&]font=fallback\b/.test(location.search);
+    var apple = !fallback && (/Mac|iPhone|iPad|iPod/.test(navigator.platform) || /Mac OS X|iPhone|iPad/.test(navigator.userAgent));
+    document.documentElement.className = apple ? 'apple' : fallback ? 'other nosf' : 'other';
+    if (!apple) {
+      var l = document.createElement('link');
+      l.rel = 'stylesheet';
+      l.href = 'https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&display=swap';
+      document.head.appendChild(l);
+    }
+  })();
+</script>
+<style>
+  @font-face {
+    font-family: "SF Pro V";
+    src: local("SFPro-Regular"), local("SF Pro Regular");
+    font-weight: 1 1000;
+    font-stretch: 30% 150%;
+  }
+  :root { --ink: #000000; --paper: #FFFFFF; --font: "SF Pro V", "Archivo", sans-serif; }
+  html.apple { --font: "SF Pro V", system-ui, sans-serif; }
+  html.nosf { --font: "Archivo", sans-serif; }
+  html, body { margin: 0; height: 100%; background: var(--paper); overflow: hidden; overscroll-behavior: none; touch-action: none; }
+  body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+         color: var(--ink); font-family: var(--font); -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+
+  /* a real guitar stood up: the fretboard on top (the left hand presses strings at frets), the body below (the right
+     hand strums over the sound hole). The stage has its own background so the strings' difference blend works */
+  .stage { position: relative; width: 100%; height: 100dvh; min-height: 560px; background: var(--paper); overflow: hidden; isolation: isolate;
+           --top: max(0px, env(safe-area-inset-top) - 20px); --bottom: max(0px, env(safe-area-inset-bottom) - 20px); }
+
+  /* SF Pro, bold, per-letter width at optical size 28, trimmed to cap height (as DRUB) */
+  .t { position: absolute; margin: 0; font-weight: 700; line-height: 1; white-space: nowrap; text-transform: uppercase;
+       font-variation-settings: "wdth" var(--w, 150), "opsz" 28; }
+  @supports (text-box: trim-both cap alphabetic) { .t { text-box: trim-both cap alphabetic; } }
+  @property --lw { syntax: '<number>'; inherits: true; initial-value: 75; }
+
+  /* the instrument, top: three words, the chosen one wide (a width morph) */
+  .inst { position: absolute; left: 50%; top: calc(36px + var(--top)); transform: translateX(-50%); display: flex; gap: 18px; z-index: 3; }
+  .inst .t { position: relative; font-size: 13px; cursor: pointer; --lw: 75; font-variation-settings: "wdth" var(--lw), "opsz" 28; transition: --lw 0.25s cubic-bezier(.3, 0, .3, 1); }
+  .inst .t::before { content: ''; position: absolute; inset: -14px -9px; }
+  .inst .t.on { --lw: 150; }
+  /* the chord the fingers make, named */
+  .name { left: 50%; top: calc(66px + var(--top)); transform: translateX(-50%); font-size: 24px; z-index: 3; }
+  .name small { font-size: 0.6em; text-transform: none; }
+
+  /* the fretboard: the nut, frets, the position dots (3, 5, 7, 9, double at 12) and a dot under each pressing finger */
+  .board { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
+  .board .nut { fill: var(--ink); } .board .fret { fill: var(--ink); }
+  .board .mark { fill: none; stroke: var(--ink); stroke-width: 1; }
+  .fingers { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+  .fingers circle { fill: var(--ink); }
+
+  /* the body: the sound hole, the strings over everything, the bridge */
+  /* one shape: the acoustic's sound hole; on the electric and the bass it morphs into the pickup */
+  .hole { position: absolute; left: 50%; width: 200px; height: 200px; transform: translate(-50%, -50%); border-radius: 100px; background: var(--ink);
+          transition: width 0.35s cubic-bezier(.3, 0, .3, 1), height 0.35s cubic-bezier(.3, 0, .3, 1); }
+  .el .hole, .bs .hole { width: var(--pw); height: 44px; }
+  .bridge { position: absolute; left: 50%; height: 8px; background: var(--ink); }
+  .strings { position: absolute; left: 0; top: 0; width: 100%; height: 100%; mix-blend-mode: difference; pointer-events: none; z-index: 1; }
+  .strings path { stroke: #FFFFFF; fill: none; }
+  .neckzone, .zone { position: absolute; left: 0; right: 0; z-index: 2; }
+  .zone { cursor: grab; } .neckzone { cursor: pointer; }
+
+  /* the first-visit hint under the bridge; it goes (sharp, no fade) on the first strum */
+  .hint { left: 50%; transform: translateX(-50%); font-size: 11px; --w: 100; z-index: 3; }
+  .played .hint { visibility: hidden; }
+  .load { position: absolute; left: 50%; width: 60px; height: 1px; margin-left: -30px; background: var(--ink); transform-origin: left; z-index: 3; }
+</style>
+</head>
+<body>
+<div class="stage ac">
+  <div class="inst" role="group" aria-label="Instrument"><p class="t on" data-k="ac">ACOUSTIC</p><p class="t" data-k="el">ELECTRIC</p><p class="t" data-k="bs">BASS</p></div>
+  <p class="t name" aria-live="polite"></p>
+  <svg class="board" aria-hidden="true"></svg>
+  <div class="hole"></div>
+  <div class="bridge"></div>
+  <svg class="strings" aria-hidden="true"></svg>
+  <svg class="fingers" aria-hidden="true"></svg>
+  <div class="neckzone" aria-label="Fretboard: press strings at the frets"></div>
+  <div class="zone" aria-label="Strings: swipe across to strum, tap one to pluck"></div>
+  <p class="t hint">PRESS THE FRETS · SWIPE ACROSS THE HOLE</p>
+  <div class="load"></div>
+</div>
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const stage = $('.stage'), board = $('.board'), svg = $('.strings'), fsvg = $('.fingers'), zone = $('.zone'), nzone = $('.neckzone');
+  const hole = $('.hole'), bridge = $('.bridge'), hint = $('.hint'), loadEl = $('.load'), nameEl = $('.name'), instEl = $('.inst');
+
+  /* ---------- the instruments: standard tunings, low string on the left as in every chord chart. Each has its own
+     recordings, one file per note, in samples/<k>/<midi>.mp3 ---------- */
+  const INST = {
+    ac: { tuning: [40, 45, 50, 55, 59, 64], lo: 40, hi: 83, width: [3, 2.6, 2.2, 1.8, 1.4, 1.1], pan: 0.35, gain: 1 },
+    el: { tuning: [40, 45, 50, 55, 59, 64], lo: 40, hi: 83, width: [2.6, 2.2, 1.9, 1.6, 1.2, 1], pan: 0.12, gain: 0.9 },
+    bs: { tuning: [28, 33, 38, 43], lo: 28, hi: 48, width: [4, 3.4, 2.8, 2.3], pan: 0, gain: 1.1 },
+  };
+  let ik = 'ac', I = INST.ac, N = 6;
+  const NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
+
+  /* ---------- sound: real recordings, no pitch shifting at play time (a note outside a set's range borrows the nearest) ---------- */
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ac = new AC({ latencyHint: 'interactive' });
+  const bufs = { ac: {}, el: {}, bs: {} };
+  // a quiet sum into a limiter: six strings at once can't clip
+  const mkOut = ctx => {
+    const m = ctx.createGain(); m.gain.value = 0.3;
+    const c = ctx.createDynamicsCompressor(); c.threshold.value = -8; c.knee.value = 6; c.ratio.value = 12; c.attack.value = 0.002; c.release.value = 0.15;
+    m.connect(c).connect(ctx.destination); return m;
+  };
+  const master = mkOut(ac);
+  const loading = {};
+  function load(k) {
+    if (loading[k]) return loading[k];
+    const S = INST[k], all = []; for (let n = S.lo; n <= S.hi; n++) all.push(n);
+    all.sort((a, b) => Math.abs(a - S.tuning[1]) - Math.abs(b - S.tuning[1]));   // the open strings and low frets first
+    let done = 0;
+    return loading[k] = Promise.all(all.map(async n => {
+      try { const r = await fetch(`samples/${k}/${n}.mp3`); bufs[k][n] = await ac.decodeAudioData(await r.arrayBuffer()); } catch (_) {}
+      if (k === ik) { loadEl.style.visibility = 'visible'; loadEl.style.transform = `scaleX(${(++done / all.length).toFixed(3)})`; }
+    })).then(() => { if (k === ik) loadEl.style.visibility = 'hidden'; });
+  }
+  load('ac').then(() => load('el')).then(() => load('bs'));
+  function bufFor(k, midi) {
+    const S = INST[k], n = Math.max(S.lo, Math.min(S.hi, midi));
+    return bufs[k][n] ? [bufs[k][n], 2 ** ((midi - n) / 12)] : [null, 1];
+  }
+  // each string is one voice: a new pluck chokes the string's previous note, as a real string does
+  const voices = [];
+  function pluck(ctx, out, when, k, s, midi, vel, up, keep) {
+    const [b, rate] = bufFor(k, midi); if (!b) return null;
+    const S = INST[k], n = S.tuning.length;
+    const src = ctx.createBufferSource(); src.buffer = b; src.playbackRate.value = rate;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1400 + 9000 * vel * vel * (up ? 0.7 : 1); lp.Q.value = 0.4;
+    const g = ctx.createGain(); g.gain.value = (0.22 + 0.78 * vel) * (up ? 0.75 : 1) * S.gain;
+    src.connect(lp).connect(g);
+    if (ctx.createStereoPanner) { const p = ctx.createStereoPanner(); p.pan.value = n > 1 ? S.pan * (2 * s / (n - 1) - 1) : 0; g.connect(p).connect(out); } else g.connect(out);
+    src.start(when);
+    const v = { src, g, end: when + b.duration / rate, t0: when };
+    if (keep) { const prev = keep[s]; if (prev && prev.end > when) { prev.g.gain.setTargetAtTime(0, when, 0.012); prev.src.stop(when + 0.1); } keep[s] = v; }
+    return v;
+  }
+  function damp() { const t = ac.currentTime; voices.forEach((v, s) => { if (v && v.end > t) { v.g.gain.setTargetAtTime(0, t, 0.02); v.src.stop(t + 0.15); } voices[s] = null; }); vib.forEach(v => v.a *= 0.2); }
+
+  /* ---------- the left hand: every finger on the board holds (string, fret). A string sounds the highest fret held on it,
+     or rings open, as on a guitar ---------- */
+  const holds = new Map();                                    // pointerId → [string, fret]
+  const latched = new Set();                                  // mouse: a click latches a fret ("s:f"); click again to lift
+  function fretOf(s) {
+    let f = 0;
+    for (const [hs, hf] of holds.values()) if (hs === s && hf > f) f = hf;
+    for (const key of latched) { const [ls, lf] = key.split(':').map(Number); if (ls === s && lf > f) f = lf; }
+    return f;
+  }
+  const noteOf = s => I.tuning[s] + fretOf(s);
+  // a fret pressed or lifted while its string still rings changes the note, softly: a hammer-on or a pull-off
+  function legato(before) {
+    const t = ac.currentTime;
+    for (let s = 0; s < N; s++) {
+      const now = fretOf(s), v = voices[s];
+      if (now !== before[s] && v && v.end > t && t - v.t0 < 2.5) sound(s, 0.3, false, (Y_NUT + BRIDGE) / 2, t, true);
+    }
+    drawFingers(); nameChord();
+  }
+
+  /* ---------- the chord name: from the notes the strings would sound now ---------- */
+  const SHAPES = [['', [0, 4, 7]], ['m', [0, 3, 7]], ['7', [0, 4, 7, 10]], ['m7', [0, 3, 7, 10]], ['maj7', [0, 4, 7, 11]], ['sus4', [0, 5, 7]], ['sus2', [0, 2, 7]], ['5', [0, 7]], ['dim', [0, 3, 6]], ['aug', [0, 4, 8]]];
+  function nameChord() {
+    if (ik === 'bs') { const held = [...Array(N).keys()].filter(s => fretOf(s)); nameEl.innerHTML = held.length ? NAMES[noteOf(held[held.length - 1]) % 12] : ''; return; }
+    const notes = [...Array(N).keys()].map(noteOf), pcs = [...new Set(notes.map(n => n % 12))], bass = notes[0] % 12;
+    let best = null;
+    for (const r of pcs) for (const [suf, iv] of SHAPES) {
+      const want = iv.map(i => (r + i) % 12);
+      if (!want.every(p => pcs.includes(p))) continue;
+      const extra = pcs.length - want.length, score = want.length * 3 - extra * 2 + (r === bass ? 2 : 0);
+      if (!best || score > best.score) best = { score, r, suf };
+    }
+    nameEl.innerHTML = best ? NAMES[best.r] + (best.suf ? `<small>${best.suf}</small>` : '') + (best.r !== bass ? `<small>/${NAMES[bass]}</small>` : '') : '';
+  }
+
+  /* ---------- layout: the strings' spacing and the frets flex with the screen; the hole and bridge keep their size ---------- */
+  let W = 0, H = 0, X = [], GAP = 0, Y_NUT = 0, FRETS = 12, FY = [], NECK_END = 0, HOLE_Y = 0, BRIDGE = 0;
+  let vib = [];
+  function layout() {
+    W = stage.clientWidth; H = stage.clientHeight;
+    const cs = getComputedStyle(stage), top = parseFloat(cs.getPropertyValue('--top')) || 0, bot = parseFloat(cs.getPropertyValue('--bottom')) || 0;
+    N = I.tuning.length;
+    GAP = Math.min(56, Math.floor((Math.min(W, 430) - 56) / N));
+    X = I.tuning.map((_, s) => W / 2 + (s - (N - 1) / 2) * GAP);
+    Y_NUT = 104 + top;
+    BRIDGE = H - bot - 64;
+    // as many frets as fit at 34 px or more each, up to 12, leaving the body 250 px for strumming
+    const avail = BRIDGE - 250 - Y_NUT;
+    FRETS = Math.max(5, Math.min(12, Math.floor(avail / 34)));
+    const step = Math.min(46, avail / FRETS);
+    FY = [...Array(FRETS + 1).keys()].map(k => Y_NUT + k * step);
+    NECK_END = FY[FRETS];
+    HOLE_Y = Math.round((NECK_END + BRIDGE) / 2);
+    const nw = GAP * N;                                         // the neck: half a string space beyond each outer string
+    const bx = W / 2 - nw / 2;
+    board.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    let g = `<rect class="nut" x="${bx}" y="${Y_NUT - 6}" width="${nw}" height="6"/>`;
+    for (let k = 1; k <= FRETS; k++) g += `<rect class="fret" x="${bx}" y="${FY[k] - 0.5}" width="${nw}" height="1"/>`;
+    for (const k of [3, 5, 7, 9, 12]) if (k <= FRETS) {
+      const y = (FY[k - 1] + FY[k]) / 2;
+      g += k === 12 ? `<circle class="mark" cx="${W / 2 - GAP}" cy="${y}" r="4"/><circle class="mark" cx="${W / 2 + GAP}" cy="${y}" r="4"/>` : `<circle class="mark" cx="${W / 2}" cy="${y}" r="4"/>`;
+    }
+    board.innerHTML = g;
+    hole.style.top = HOLE_Y + 'px'; stage.style.setProperty('--pw', (nw + 12) + 'px');
+    bridge.style.top = BRIDGE + 'px'; bridge.style.width = (nw + 24) + 'px'; bridge.style.marginLeft = -(nw + 24) / 2 + 'px';
+    nzone.style.top = (Y_NUT - 10) + 'px'; nzone.style.height = (NECK_END - Y_NUT + 10) + 'px';
+    zone.style.top = (NECK_END + 4) + 'px'; zone.style.height = (BRIDGE - NECK_END + 20) + 'px';
+    hint.style.top = (BRIDGE + 30) + 'px'; loadEl.style.top = (BRIDGE + 26) + 'px';
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`); fsvg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.innerHTML = I.tuning.map((_, s) => `<path stroke-width="${I.width[s]}"/>`).join('');
+    vib = I.tuning.map(() => ({ a: 0, t: 0, y: 0.7 }));
+    drawFingers(); drawStrings(performance.now() / 1000); nameChord();
+  }
+  function drawFingers() {
+    const dots = [];
+    for (let s = 0; s < N; s++) { const f = fretOf(s); if (f && f <= FRETS) dots.push(`<circle cx="${X[s]}" cy="${(FY[f - 1] + FY[f]) / 2}" r="${Math.min(13, GAP * 0.3)}"/>`); }
+    fsvg.innerHTML = dots.join('');
+  }
+
+  /* ---------- the strings, drawn: they shake when they sound, from the fret they're held at down to the bridge ---------- */
+  function drawStrings(now) {
+    const ps = svg.querySelectorAll('path'); if (!ps.length) return false;
+    let busy = false;
+    for (let s = 0; s < N; s++) {
+      const v = vib[s], age = now - v.t, a = v.a * Math.exp(-age * 2.6), x = X[s];
+      const f = fretOf(s), y0 = f ? (FY[f - 1] + FY[f]) / 2 : Y_NUT, y1 = BRIDGE + 4, L = y1 - y0;
+      if (a < 0.05) { ps[s].setAttribute('d', `M${x} ${Y_NUT}V${y1}`); continue; }
+      busy = true;
+      const amp = a * Math.cos(age * 2 * Math.PI * (9 + s * 1.3)), py = y0 + v.y * L;
+      let d = `M${x} ${Y_NUT}L${x} ${y0}`;
+      for (let i = 1; i <= 24; i++) { const y = y0 + L * i / 24, k = y < py ? (y - y0) / (py - y0) : (y1 - y) / (y1 - py); d += `L${(x + amp * k).toFixed(2)} ${y.toFixed(1)}`; }
+      ps[s].setAttribute('d', d);
+    }
+    return busy;
+  }
+  let raf = 0;
+  const loop = () => { const busy = drawStrings(performance.now() / 1000); raf = busy ? requestAnimationFrame(loop) : 0; };
+  const kick = () => { if (!raf) raf = requestAnimationFrame(loop); };
+
+  function sound(s, vel, up, y, when, soft) {
+    pluck(ac, master, when, ik, s, noteOf(s), vel, up, voices);
+    vib[s] = { a: (soft ? 1 : 2) + 6 * vel, t: performance.now() / 1000 + Math.max(0, when - ac.currentTime), y: Math.min(0.9, Math.max(0.4, (y - Y_NUT) / (BRIDGE - Y_NUT))) };
+    kick();
+    if (!soft && !stage.classList.contains('played')) stage.classList.add('played');
+  }
+
+  /* ---------- touch: any number of fingers at once ---------- */
+  const unlock = () => { if (ac.state !== 'running') ac.resume(); };
+  const local = e => { const r = stage.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  const before = () => [...Array(N).keys()].map(fretOf);
+  // the board: the nearest string, the fret space the finger is in (above the nut = open)
+  function spot(e) {
+    const [x, y] = local(e);
+    let s = 0, bd = 1e9; X.forEach((xs, i) => { const d = Math.abs(xs - x); if (d < bd) { bd = d; s = i; } });
+    let f = 0; for (let k = 1; k <= FRETS; k++) if (y >= FY[k - 1] && y < FY[k]) f = k;
+    if (y >= FY[FRETS]) f = FRETS;
+    return [s, f];
+  }
+  nzone.addEventListener('pointerdown', e => {
+    unlock(); e.preventDefault();
+    const b = before(), [s, f] = spot(e);
+    if (e.pointerType === 'mouse') { const key = s + ':' + f; if (latched.has(key)) latched.delete(key); else if (f) { [...latched].filter(k => k.startsWith(s + ':')).forEach(k => latched.delete(k)); latched.add(key); } }
+    else { try { nzone.setPointerCapture(e.pointerId); } catch (_) {} if (f) holds.set(e.pointerId, [s, f]); }
+    legato(b);
+  });
+  nzone.addEventListener('pointermove', e => {
+    if (!holds.has(e.pointerId)) return;
+    const [s, f] = spot(e), [hs, hf] = holds.get(e.pointerId);
+    if (s !== hs || f !== hf) { const b = before(); holds.set(e.pointerId, [s, f]); legato(b); }   // a slide
+  });
+  const lift = e => { if (!holds.has(e.pointerId)) return; const b = before(); holds.delete(e.pointerId); legato(b); };
+  nzone.addEventListener('pointerup', lift); nzone.addEventListener('pointercancel', lift);
+
+  // the right hand: every string a finger crosses over the body sounds, in crossing order (left to right = down)
+  const strummers = new Map();
+  zone.addEventListener('pointerdown', e => {
+    unlock(); try { zone.setPointerCapture(e.pointerId); } catch (_) {}
+    const [x, y] = local(e);
+    strummers.set(e.pointerId, { x, t: e.timeStamp, moved: 0, x0: x, y });
+  });
+  zone.addEventListener('pointermove', e => {
+    const f = strummers.get(e.pointerId); if (!f) return;
+    const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+    for (const ev of (evs.length ? evs : [e])) {
+      const [x, y] = local(ev), dt = Math.max(1, ev.timeStamp - f.t), dx = x - f.x;
+      if (dx) {
+        const up = dx < 0, vel = Math.min(1, Math.max(0.12, (Math.abs(dx) / dt - 0.05) / 2.2));
+        const hit = [];
+        for (let s = 0; s < N; s++) { const xs = X[s]; if ((f.x < xs && x >= xs) || (f.x > xs && x <= xs)) hit.push([s, (xs - f.x) / dx]); }
+        hit.sort((a, b) => a[1] - b[1]);
+        for (const [s] of hit) sound(s, vel, up, y, ac.currentTime);
+        f.moved += Math.abs(dx);
+      }
+      f.x = x; f.y = y; f.t = ev.timeStamp;
+    }
+  });
+  zone.addEventListener('pointerup', e => {
+    const f = strummers.get(e.pointerId); if (!f) return; strummers.delete(e.pointerId);
+    if (f.moved < 6) { let best = -1, bd = GAP / 2; X.forEach((xs, s) => { const d = Math.abs(xs - f.x0); if (d < bd) { bd = d; best = s; } }); if (best >= 0) sound(best, 0.55, false, f.y, ac.currentTime); }
+  });
+  zone.addEventListener('pointercancel', e => strummers.delete(e.pointerId));
+
+  // the instrument switch
+  instEl.addEventListener('pointerdown', e => {
+    const p = e.target.closest('[data-k]'); if (!p || p.dataset.k === ik) return;
+    unlock(); damp(); holds.clear(); latched.clear();
+    ik = p.dataset.k; I = INST[ik]; stage.classList.remove('ac', 'el', 'bs'); stage.classList.add(ik);
+    instEl.querySelectorAll('[data-k]').forEach(q => q.classList.toggle('on', q === p));
+    load(ik); layout();
+  });
+
+  /* ---------- keys, for desktop: → or space strums down, ← strums up, D damps, Escape lifts every latched fret ---------- */
+  function strum(up, vel = 0.7, spread = 0.012, when = ac.currentTime) {
+    const order = [...Array(N).keys()]; if (up) order.reverse();
+    order.forEach((s, k) => sound(s, vel, up, HOLE_Y, when + k * spread));
+  }
+  addEventListener('keydown', e => {
+    if (e.repeat) return; unlock();
+    if (e.key === ' ' || e.key === 'ArrowRight') { e.preventDefault(); strum(false); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); strum(true, 0.5); }
+    else if (e.key === 'd' || e.key === 'D') damp();
+    else if (e.key === 'Escape') { const b = before(); latched.clear(); legato(b); }
+  });
+
+  addEventListener('resize', layout);
+  layout();
+
+  /* ---------- ?debug: offline renders for listening checks.
+     __g.render(k, [[time, 'D'|'U', vel, [frets per string]], …], secs) → WAV blob ---------- */
+  if (/[?&]debug\b/.test(location.search)) window.__g = {
+    bufs, ac, strum, load, ready: k => Object.keys(bufs[k]).length, latch: (s, f) => { latched.add(s + ':' + f); drawFingers(); nameChord(); }, name: () => nameEl.textContent,
+    async render(k, seq, secs) {
+      await load(k);
+      const oc = new OfflineAudioContext(2, Math.ceil(secs * 44100), 44100), m = mkOut(oc), T = INST[k].tuning;
+      const keep = [];
+      for (const [t, what, vel, frets] of seq) {
+        const up = what === 'U', order = [...T.keys()]; if (up) order.reverse();
+        order.forEach((s, j) => pluck(oc, m, t + j * (up ? 0.009 : 0.013), k, s, T[s] + frets[s], vel, up, keep));
+      }
+      const b = await oc.startRendering(), n = b.length, d = new DataView(new ArrayBuffer(44 + n * 4));
+      const w = (o, s) => [...s].forEach((ch, i) => d.setUint8(o + i, ch.charCodeAt(0)));
+      w(0, 'RIFF'); d.setUint32(4, 36 + n * 4, true); w(8, 'WAVEfmt '); d.setUint32(16, 16, true); d.setUint16(20, 1, true); d.setUint16(22, 2, true);
+      d.setUint32(24, 44100, true); d.setUint32(28, 44100 * 4, true); d.setUint16(32, 4, true); d.setUint16(34, 16, true); w(36, 'data'); d.setUint32(40, n * 4, true);
+      const L = b.getChannelData(0), R = b.getChannelData(1);
+      for (let i = 0; i < n; i++) { d.setInt16(44 + i * 4, Math.max(-1, Math.min(1, L[i])) * 32767, true); d.setInt16(46 + i * 4, Math.max(-1, Math.min(1, R[i])) * 32767, true); }
+      return new Blob([d], { type: 'audio/wav' });
+    },
+  };
+})();
+</script>
+</body>
+</html>
